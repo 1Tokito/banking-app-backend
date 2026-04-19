@@ -27,6 +27,13 @@ app.get("/health", (req, res) => {
   res.json({ status: "ok", timestamp: new Date().toISOString() });
 });
 
+app.get('/seed-admin', async (req, res) => {
+  const Admin = require('./models/Admin');
+  const existing = await Admin.findOne({ username: 'admin' });
+  if (existing) return res.json({ message: 'Admin already exists' });
+  await Admin.create({ username: 'admin', password: 'admin123' });
+  res.json({ message: 'Admin created successfully' });
+});
 // ─── 404 handler ──────────────────────────────────────────────────────────────
 app.use((req, res) => {
   res.status(404).json({ error: `Route ${req.method} ${req.path} not found` });
