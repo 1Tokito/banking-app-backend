@@ -4,22 +4,20 @@ const User = require("../models/User");
 const PendingTransaction = require("../models/PendingTransaction");
 
 // Helper: generate a 6-digit OTP
-const generateOTP = () => {
-  return Math.floor(100000 + Math.random() * 900000).toString();
-};
+const generateOTP = () => Math.floor(100000 + Math.random() * 900000).toString();
 
-// Helper: OTP expiry — 10 minutes from now
+// Helper: OTP expiry — 10 minutes
 const otpExpiry = () => new Date(Date.now() + 10 * 60 * 1000);
 
-// ─── USER ROUTES ────────────────────────────────────────────────────────────
+// ─── USER ROUTES ─────────────────────────────────────────────────────────────
 
-// POST /transfer — User initiates a transfer (requires passcode + PIN)
+// POST /transfer — User initiates a transfer (no PIN required, just account details)
 router.post("/transfer", async (req, res) => {
   try {
-    const { fromAccountNumber, toAccountNumber, amount, description, passcode, pin } = req.body;
+    const { fromAccountNumber, toAccountNumber, amount, description } = req.body;
 
-    if (!fromAccountNumber || !toAccountNumber || !amount || !passcode || !pin) {
-      return res.status(400).json({ error: "All fields are required" });
+    if (!fromAccountNumber || !toAccountNumber || !amount) {
+      return res.status(400).json({ error: "From account, to account, and amount are required" });
     }
 
     if (fromAccountNumber === toAccountNumber) {
@@ -31,19 +29,16 @@ router.post("/transfer", async (req, res) => {
       return res.status(400).json({ error: "Invalid amount" });
     }
 
-    // Verify sender
     const sender = await User.findOne({ accountNumber: fromAccountNumber, isActive: true });
     if (!sender) return res.status(404).json({ error: "Sender account not found" });
 
-    if (sender.passcode !== passcode) return res.status(401).json({ error: "Invalid passcode" });
-    if (sender.pin !== pin) return res.status(401).json({ error: "Invalid PIN" });
-    if (sender.balance < numAmount) return res.status(400).json({ error: "Insufficient funds" });
+    if (sender.balance < numAmount) {
+      return res.status(400).json({ error: "Insufficient funds" });
+    }
 
-    // Verify recipient
     const recipient = await User.findOne({ accountNumber: toAccountNumber, isActive: true });
     if (!recipient) return res.status(404).json({ error: "Recipient account not found" });
 
-    // Create pending transaction
     const pending = new PendingTransaction({
       fromAccountNumber: sender.accountNumber,
       fromName: sender.fullName,
@@ -65,7 +60,7 @@ router.post("/transfer", async (req, res) => {
   }
 });
 
-// POST /confirm-otp — User confirms transfer with OTP
+// POST /confirm-otp — User confirms transfer with OTP from admin
 router.post("/confirm-otp", async (req, res) => {
   try {
     const { transactionId, otp, accountNumber } = req.body;
@@ -88,12 +83,11 @@ router.post("/confirm-otp", async (req, res) => {
     if (pending.otp !== otp) return res.status(401).json({ error: "Invalid OTP" });
 
     if (new Date() > pending.otpExpiry) {
-      pending.status = "pending"; // reset so admin can resend
+      pending.status = "pending";
       await pending.save();
       return res.status(401).json({ error: "OTP has expired. Ask admin to resend." });
     }
 
-    // Execute the transfer
     const sender = await User.findOne({ accountNumber: pending.fromAccountNumber });
     const recipient = await User.findOne({ accountNumber: pending.toAccountNumber });
 
@@ -109,7 +103,6 @@ router.post("/confirm-otp", async (req, res) => {
 
     const ref = `TXN${Date.now()}`;
 
-    // Debit sender
     sender.balance -= pending.amount;
     sender.transactions.push({
       type: "debit",
@@ -119,7 +112,6 @@ router.post("/confirm-otp", async (req, res) => {
     });
     await sender.save();
 
-    // Credit recipient
     recipient.balance += pending.amount;
     recipient.transactions.push({
       type: "credit",
@@ -129,7 +121,6 @@ router.post("/confirm-otp", async (req, res) => {
     });
     await recipient.save();
 
-    // Mark transaction complete
     pending.status = "completed";
     pending.completedAt = new Date();
     pending.otp = null;
@@ -146,9 +137,9 @@ router.post("/confirm-otp", async (req, res) => {
   }
 });
 
-// ─── ADMIN ROUTES ────────────────────────────────────────────────────────────
+// ─── ADMIN ROUTES ─────────────────────────────────────────────────────────────
 
-// POST /admin/send — Admin sends money directly to a user (no OTP needed)
+// POST /admin/send — Admin sends money directly to a user
 router.post("/admin/send", async (req, res) => {
   try {
     const { toAccountNumber, amount, description } = req.body;
@@ -186,11 +177,12 @@ router.post("/admin/send", async (req, res) => {
   }
 });
 
-// GET /admin/pending — Admin views all pending transactions
+// GET /admin/pending — Admin views pending transactions
 router.get("/admin/pending", async (req, res) => {
   try {
-    const pending = await PendingTransaction.find({ status: { $in: ["pending", "otp_sent"] } })
-      .sort({ initiatedAt: -1 });
+    const pending = await PendingTransaction.find({
+      status: { $in: ["pending", "otp_sent"] },
+    }).sort({ initiatedAt: -1 });
     res.json({ pendingTransactions: pending });
   } catch (err) {
     console.error("Get pending error:", err);
@@ -202,10 +194,7 @@ router.get("/admin/pending", async (req, res) => {
 router.post("/generate-otp", async (req, res) => {
   try {
     const { transactionId } = req.body;
-
-    if (!transactionId) {
-      return res.status(400).json({ error: "Transaction ID is required" });
-    }
+    if (!transactionId) return res.status(400).json({ error: "Transaction ID is required" });
 
     const pending = await PendingTransaction.findById(transactionId);
     if (!pending) return res.status(404).json({ error: "Transaction not found" });
@@ -214,7 +203,6 @@ router.post("/generate-otp", async (req, res) => {
       return res.status(400).json({ error: "Transaction cannot be approved in its current state" });
     }
 
-    // Verify sender still has funds
     const sender = await User.findOne({ accountNumber: pending.fromAccountNumber });
     if (!sender || sender.balance < pending.amount) {
       pending.status = "rejected";
@@ -230,7 +218,7 @@ router.post("/generate-otp", async (req, res) => {
 
     res.json({
       message: "OTP generated. Share this with the user to confirm their transfer.",
-      otp, // In production this would be sent via SMS/email
+      otp,
       transactionId: pending._id,
       expiresIn: "10 minutes",
       transaction: {
@@ -245,14 +233,11 @@ router.post("/generate-otp", async (req, res) => {
   }
 });
 
-// POST /approve — Alias: admin can also use this endpoint to approve + generate OTP
+// POST /approve — Alias for generate-otp
 router.post("/approve", async (req, res) => {
   try {
     const { transactionId } = req.body;
-
-    if (!transactionId) {
-      return res.status(400).json({ error: "Transaction ID is required" });
-    }
+    if (!transactionId) return res.status(400).json({ error: "Transaction ID is required" });
 
     const pending = await PendingTransaction.findById(transactionId);
     if (!pending) return res.status(404).json({ error: "Transaction not found" });
@@ -290,10 +275,7 @@ router.post("/approve", async (req, res) => {
 router.post("/admin/reject", async (req, res) => {
   try {
     const { transactionId } = req.body;
-
-    if (!transactionId) {
-      return res.status(400).json({ error: "Transaction ID is required" });
-    }
+    if (!transactionId) return res.status(400).json({ error: "Transaction ID is required" });
 
     const pending = await PendingTransaction.findById(transactionId);
     if (!pending) return res.status(404).json({ error: "Transaction not found" });
@@ -312,7 +294,7 @@ router.post("/admin/reject", async (req, res) => {
   }
 });
 
-// GET /admin/transactions — Admin views all transactions (all statuses)
+// GET /admin/transactions — Admin views all transactions
 router.get("/admin/transactions", async (req, res) => {
   try {
     const { status } = req.query;
