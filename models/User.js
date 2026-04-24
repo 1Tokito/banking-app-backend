@@ -15,6 +15,8 @@ const userSchema = new mongoose.Schema(
     password: { type: String, required: true },
     pin: { type: String, required: true, match: /^\d{4,6}$/ },
     accountNumber: { type: String, required: true, unique: true, match: /^\d{10}$/ },
+    country: { type: String, default: "Nigeria" },
+    currency: { type: String, default: "NGN" },
     balance: { type: Number, default: 0, min: 0 },
     transactions: [transactionSchema],
     isActive: { type: Boolean, default: true },

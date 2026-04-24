@@ -2,10 +2,28 @@ const mongoose = require("mongoose");
 
 const pendingTransactionSchema = new mongoose.Schema(
   {
-    fromAccountNumber: { type: String, required: true },
-    fromName: { type: String, required: true },
-    toAccountNumber: { type: String, required: true },
-    toName: { type: String, required: true },
+    transferType: {
+      type: String,
+      enum: ["inbank", "international"],
+      required: true,
+      default: "inbank",
+    },
+
+    // ── In-bank fields ──────────────────────────────────────────
+    fromAccountNumber: { type: String },
+    fromName: { type: String },
+    toAccountNumber: { type: String },
+    toName: { type: String },
+
+    // ── International fields ────────────────────────────────────
+    recipientName: { type: String },
+    recipientBank: { type: String },
+    recipientAccountOrIBAN: { type: String },
+    swiftCode: { type: String },
+    recipientCountry: { type: String },
+    recipientCurrency: { type: String },
+
+    // ── Shared fields ───────────────────────────────────────────
     amount: { type: Number, required: true, min: 1 },
     description: { type: String, default: "Transfer" },
     status: {
